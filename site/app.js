@@ -62,7 +62,7 @@ async function init() {
         return src.indexOf('[[');
       },
       tokenizer(src) {
-        const match = /^\[\[(?!\[)([^\[\]|]*?)(?:\|([^\[\]]*?))?\]\](?!\])/.exec(src);
+        const match = /^\[\[(?!\[)([^\[\]|&#]*?)(?:(?:\||&#124;|\\\|)([^\[\]]*?))?\]\](?!\])/.exec(src);
         if (!match) return;
 
         const id = match[1].trim();
@@ -1566,8 +1566,11 @@ function renderMarkdownWithMath(src) {
   const placeholders = [];
   let i = 0;
 
+  // Protect pipe '|' inside wikilinks so Markdown tables don't get broken
+  let safe = src.replace(/\[\[([^\[\]\n]+?)\|([^\[\]\n]+?)\]\]/g, '\[\[$1&#124;$2\]\]');
+
   // Protect block math $$...$$
-  let safe = src.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => {
+  safe = safe.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => {
     const idx = i++;
     placeholders.push({ idx, tex: tex.trim(), display: true });
     return `<span data-mathph="${idx}"></span>`;
