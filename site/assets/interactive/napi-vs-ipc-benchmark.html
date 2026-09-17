@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Node.js 하이브리드 아키텍처: 서브프로세스 IPC vs napi-rs 인프로세스 비교기</title>
+  <style>
+    :root {
+      --kb-bg: #f2f1ec;
+      --kb-surface: #faf9f5;
+      --kb-inset: #eae9e3;
+      --kb-text: #252824;
+      --kb-text-2: #686c67;
+      --kb-text-3: #9a9d97;
+      --kb-accent: #405779;
+      --kb-accent-light: #e6ecf3;
+      --kb-border: #d5d5cd;
+      --kb-border-light: #e3e2dc;
+      --kb-serif: 'Noto Serif KR', Georgia, serif;
+      --kb-sans: 'Pretendard Variable', 'Pretendard', -apple-system, sans-serif;
+      --kb-mono: 'JetBrains Mono', monospace;
+      --kb-green: #2d855f;
+      --kb-red: #c75b39;
+      --kb-amber: #b8860b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--kb-sans);
+      background: var(--kb-surface);
+      color: var(--kb-text);
+      padding: 16px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #app {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 14px;
+      border-bottom: 1px solid var(--kb-border-light);
+      padding-bottom: 8px;
+    }
+
+    h1 {
+      font-family: var(--kb-serif);
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--kb-text);
+      margin-bottom: 4px;
+    }
+
+    p.lead {
+      font-size: 13px;
+      color: var(--kb-text-2);
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      font-family: var(--kb-sans);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 14px;
+      border-radius: 4px;
+      border: 1px solid var(--kb-border);
+      background: var(--kb-inset);
+      color: var(--kb-text);
+      cursor: pointer;
+      min-height: 44px;
+      min-width: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    button:focus-visible {
+      outline: 2px solid var(--kb-accent);
+      outline-offset: 2px;
+    }
+
+    button.primary {
+      background: var(--kb-accent);
+      color: #ffffff;
+      border-color: var(--kb-accent);
+    }
+
+    button.danger {
+      background: #fdf2ed;
+      color: var(--kb-red);
+      border-color: #f1c7b5;
+    }
+
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    @media (max-width: 520px) {
+      .comparison-grid { grid-template-columns: 1fr; }
+    }
+
+    .mode-card {
+      background: var(--kb-surface);
+      border: 1px solid var(--kb-border);
+      border-radius: 4px;
+      padding: 12px;
+      position: relative;
+    }
+
+    .mode-card.crashed {
+      background: #fce8e6;
+      border-color: var(--kb-red);
+    }
+
+    .mode-card.active-run {
+      border-color: var(--kb-accent);
+      box-shadow: 0 0 0 1px var(--kb-accent);
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .mode-title {
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: var(--kb-mono);
+    }
+
+    .badge-safe { background: #e6f4ea; color: var(--kb-green); border: 1px solid #b7dfca; }
+    .badge-fast { background: var(--kb-accent-light); color: var(--kb-accent); border: 1px solid #c2d1e4; }
+    .badge-dead { background: var(--kb-red); color: #ffffff; }
+
+    .arch-diagram {
+      background: var(--kb-inset);
+      border: 1px solid var(--kb-border-light);
+      border-radius: 4px;
+      padding: 8px;
+      font-family: var(--kb-mono);
+      font-size: 11px;
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+
+    .stats {
+      font-size: 12px;
+      color: var(--kb-text-2);
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+    }
+
+    .stat-val {
+      font-family: var(--kb-mono);
+      font-weight: 600;
+      color: var(--kb-text);
+    }
+
+    .log-view {
+      border: 1px solid var(--kb-border);
+      background: #faf8f5;
+      border-radius: 4px;
+      padding: 10px;
+      max-height: 110px;
+      overflow-y: auto;
+      font-family: var(--kb-mono);
+      font-size: 11px;
+    }
+
+    .log-item {
+      margin-bottom: 3px;
+      color: var(--kb-text-2);
+    }
+    .log-item.ipc { color: var(--kb-accent); }
+    .log-item.napi { color: var(--kb-green); }
+    .log-item.crash { color: var(--kb-red); font-weight: 700; }
+  </style>
+</head>
+<body>
+
+<main id="app" aria-labelledby="widget-title">
+  <header>
+    <h1 id="widget-title">서브프로세스 IPC (`rg.exe`) vs napi-rs 아키텍처 실시간 비교기</h1>
+    <p class="lead">동일한 Rust 네이티브 코드를 실행할 때, 프로세스 분리(샌드박스)와 인프로세스 메모리 직통 바인딩의 지연 시간 및 크래시 격리 차이를 관찰합니다.</p>
+  </header>
+
+  <div class="controls" role="toolbar" aria-label="실행 조작">
+    <button type="button" class="primary" id="btn-run" aria-label="1,000회 연산 동시 실행">1,000회 연산 동시 실행 (Run 1,000 Ops)</button>
+    <button type="button" class="danger" id="btn-panic" aria-label="Rust 메모리 크래시(Panic) 유발">🚨 Rust 메모리 세그폴트 유발</button>
+    <button type="button" id="btn-reset" aria-label="초기화">초기화</button>
+  </div>
+
+  <section class="comparison-grid" aria-label="아키텍처 비교">
+    <!-- Subprocess IPC -->
+    <div class="mode-card" id="card-ipc">
+      <div class="card-head">
+        <div class="mode-title">
+          <span>방식 A: 서브프로세스 파이프</span>
+        </div>
+        <span class="badge badge-safe" id="badge-ipc-status">SANDBOXED (격리됨)</span>
+      </div>
+      <div class="arch-diagram">
+Node.js (메인 프로세스 PID: 1024)
+       │
+       ▼ OS 파이프 (stdin/stdout IPC)
+Rust 바이너리 (자식 프로세스 PID: 2048)
+      </div>
+      <div class="stats">
+        <div class="stat-row">
+          <span>호출 오버헤드:</span>
+          <span class="stat-val" id="stat-ipc-latency">~3.2 ms (프로세스 스폰)</span>
+        </div>
+        <div class="stat-row">
+          <span>누적 실행 횟수:</span>
+          <span class="stat-val" id="stat-ipc-runs">0회</span>
+        </div>
+        <div class="stat-row">
+          <span>메인 서버 생존:</span>
+          <span class="stat-val" id="stat-ipc-server" style="color:var(--kb-green)">100% 정상 가동</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- N-API In-Process -->
+    <div class="mode-card" id="card-napi">
+      <div class="card-head">
+        <div class="mode-title">
+          <span>방식 B: napi-rs 네이티브 애드온</span>
+        </div>
+        <span class="badge badge-fast" id="badge-napi-status">ZERO-OVERHEAD (직통)</span>
+      </div>
+      <div class="arch-diagram">
+Node.js (메인 프로세스 PID: 1024)
+  └─ C-ABI (Node-API 함수 직접 호출)
+  └─ my_rust_addon.node (동일 메모리 공간)
+      </div>
+      <div class="stats">
+        <div class="stat-row">
+          <span>호출 오버헤드:</span>
+          <span class="stat-val" id="stat-napi-latency">~120 ns (나노초 직통)</span>
+        </div>
+        <div class="stat-row">
+          <span>누적 실행 횟수:</span>
+          <span class="stat-val" id="stat-napi-runs">0회</span>
+        </div>
+        <div class="stat-row">
+          <span>메인 서버 생존:</span>
+          <span class="stat-val" id="stat-napi-server" style="color:var(--kb-green)">정상</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="label" style="font-size:11px;text-transform:uppercase;color:var(--kb-text-3);font-weight:600;margin-bottom:6px">실시간 시스템 이벤트 로그</div>
+  <div class="log-view" id="log-box" role="log" aria-live="polite">
+    <div class="log-item">[System Ready] Node.js 런타임 준비 완료. 두 방식의 성능과 격리성을 테스트하세요.</div>
+  </div>
+</main>
+
+<script>
+(function() {
+  let runs = 0;
+  let napiAlive = true;
+
+  const btnRun = document.getElementById('btn-run');
+  const btnPanic = document.getElementById('btn-panic');
+  const btnReset = document.getElementById('btn-reset');
+
+  const cardIpc = document.getElementById('card-ipc');
+  const cardNapi = document.getElementById('card-napi');
+  const statIpcRuns = document.getElementById('stat-ipc-runs');
+  const statNapiRuns = document.getElementById('stat-napi-runs');
+  const statIpcServer = document.getElementById('stat-ipc-server');
+  const statNapiServer = document.getElementById('stat-napi-server');
+  const badgeIpcStatus = document.getElementById('badge-ipc-status');
+  const badgeNapiStatus = document.getElementById('badge-napi-status');
+  const logBox = document.getElementById('log-box');
+
+  function log(msg, cls) {
+    const item = document.createElement('div');
+    item.className = 'log-item' + (cls ? ' ' + cls : '');
+    item.textContent = `[t+${runs}] ${msg}`;
+    logBox.insertBefore(item, logBox.firstChild);
+  }
+
+  btnRun.addEventListener('click', function() {
+    if (!napiAlive) {
+      log('⚠️ 메인 프로세스가 이미 죽어있습니다. 초기화 후 다시 시도하세요.', 'crash');
+      return;
+    }
+    runs += 1000;
+    statIpcRuns.textContent = runs.toLocaleString() + '회';
+    statNapiRuns.textContent = runs.toLocaleString() + '회';
+
+    log(`[IPC] child_process.spawn(rg) 1,000회 수행: 총 지연 약 3,200ms (프로세스 격리 유지됨)`, 'ipc');
+    log(`[napi-rs] import { run } 1,000회 C-ABI 직통 수행: 총 지연 약 0.12ms (속도 25,000배 빠름)`, 'napi');
+  });
+
+  btnPanic.addEventListener('click', function() {
+    runs += 1;
+    log('🚨 [PANIC EVENT] Rust 네이티브 코드에서 세그멘테이션 폴트(Null Pointer Dereference) 발생!', 'crash');
+    
+    // IPC Behavior
+    log('[IPC] 자식 프로세스(PID 2048)가 종료 코드 139(SIGSEGV)로 사망. 메인 Node.js는 에러 이벤트만 수신하고 100% 정상 작동 유지!', 'ipc');
+    badgeIpcStatus.textContent = 'SANDBOX GUARDED (자식만 사망)';
+    statIpcServer.textContent = '정상 (무결성 유지)';
+
+    // NAPI Behavior
+    napiAlive = false;
+    cardNapi.classList.add('crashed');
+    badgeNapiStatus.className = 'badge badge-dead';
+    badgeNapiStatus.textContent = 'PROCESS KILLED (서버 즉사)';
+    statNapiServer.textContent = '크래시 (프로세스 종료)';
+    statNapiServer.style.color = 'var(--kb-red)';
+    log('💥 [napi-rs] 동일 프로세스 메모리 오염으로 인해 메인 Node.js 서버 전체가 즉시 강제 종료됨!', 'crash');
+  });
+
+  btnReset.addEventListener('click', function() {
+    runs = 0;
+    napiAlive = true;
+    cardNapi.classList.remove('crashed');
+    badgeIpcStatus.className = 'badge badge-safe';
+    badgeIpcStatus.textContent = 'SANDBOXED (격리됨)';
+    badgeNapiStatus.className = 'badge badge-fast';
+    badgeNapiStatus.textContent = 'ZERO-OVERHEAD (직통)';
+    statIpcRuns.textContent = '0회';
+    statNapiRuns.textContent = '0회';
+    statIpcServer.textContent = '100% 정상 가동';
+    statIpcServer.style.color = 'var(--kb-green)';
+    statNapiServer.textContent = '정상';
+    statNapiServer.style.color = 'var(--kb-green)';
+    logBox.innerHTML = '<div class="log-item">[System Reset] 런타임 환경이 초기화되었습니다.</div>';
+  });
+})();
+</script>
+</body>
+</html>

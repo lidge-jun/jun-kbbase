@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V8 JIT 투기적 최적화 및 역최적화(Deopt) 시뮬레이터</title>
+  <style>
+    :root {
+      --kb-bg: #f2f1ec;
+      --kb-surface: #faf9f5;
+      --kb-inset: #eae9e3;
+      --kb-text: #252824;
+      --kb-text-2: #686c67;
+      --kb-text-3: #9a9d97;
+      --kb-accent: #405779;
+      --kb-accent-light: #e6ecf3;
+      --kb-border: #d5d5cd;
+      --kb-border-light: #e3e2dc;
+      --kb-serif: 'Noto Serif KR', Georgia, serif;
+      --kb-sans: 'Pretendard Variable', 'Pretendard', -apple-system, sans-serif;
+      --kb-mono: 'JetBrains Mono', monospace;
+      --kb-green: #2d855f;
+      --kb-red: #c75b39;
+      --kb-amber: #b8860b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--kb-sans);
+      background: var(--kb-surface);
+      color: var(--kb-text);
+      padding: 16px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #app {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--kb-border-light);
+      padding-bottom: 8px;
+    }
+
+    h1 {
+      font-family: var(--kb-serif);
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--kb-text);
+      margin-bottom: 4px;
+    }
+
+    p.lead {
+      font-size: 13px;
+      color: var(--kb-text-2);
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      font-family: var(--kb-sans);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 14px;
+      border-radius: 4px;
+      border: 1px solid var(--kb-border);
+      background: var(--kb-inset);
+      color: var(--kb-text);
+      cursor: pointer;
+      min-height: 44px;
+      min-width: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    button:focus-visible {
+      outline: 2px solid var(--kb-accent);
+      outline-offset: 2px;
+    }
+
+    button.primary {
+      background: var(--kb-accent);
+      color: #ffffff;
+      border-color: var(--kb-accent);
+    }
+
+    button.danger {
+      background: #fdf2ed;
+      color: var(--kb-red);
+      border-color: #f1c7b5;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 480px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--kb-surface);
+      border: 1px solid var(--kb-border);
+      border-radius: 4px;
+      padding: 10px 12px;
+    }
+
+    .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--kb-text-3);
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--kb-mono);
+    }
+
+    .badge-interp {
+      background: var(--kb-inset);
+      color: var(--kb-text-2);
+    }
+
+    .badge-opt {
+      background: #e6f4ea;
+      color: var(--kb-green);
+      border: 1px solid #b7dfca;
+    }
+
+    .badge-deopt {
+      background: #fce8e6;
+      color: var(--kb-red);
+      border: 1px solid #f5b7b1;
+    }
+
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+      font-size: 13px;
+    }
+
+    .metric-val {
+      font-family: var(--kb-mono);
+      font-weight: 600;
+    }
+
+    .code-view {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border-radius: 4px;
+      padding: 10px 12px;
+      font-family: var(--kb-mono);
+      font-size: 12px;
+      line-height: 1.5;
+      margin-bottom: 12px;
+      min-height: 76px;
+    }
+
+    .kw { color: #569cd6; }
+    .fn { color: #dcdcaa; }
+    .cm { color: #6a9955; font-style: italic; }
+    .hl { color: #4ec9b0; font-weight: bold; }
+    .warn { color: #ce9178; }
+
+    .log-container {
+      border: 1px solid var(--kb-border);
+      background: #faf8f5;
+      border-radius: 4px;
+      padding: 8px 10px;
+      max-height: 110px;
+      overflow-y: auto;
+      font-family: var(--kb-mono);
+      font-size: 11px;
+    }
+
+    .log-row {
+      margin-bottom: 3px;
+      color: var(--kb-text-2);
+    }
+    .log-row.opt { color: var(--kb-green); font-weight: 600; }
+    .log-row.deopt { color: var(--kb-red); font-weight: 700; }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+<main id="app" aria-labelledby="widget-title">
+  <header>
+    <h1 id="widget-title">V8 JIT 투기적 최적화 및 역최적화(Deopt) 관찰기</h1>
+    <p class="lead">정수 덧셈을 반복해 V8이 TurboFan 기계어로 최적화하는 과정과, 불일치 타입(문자열) 주입 시 비상 탈출하는 과정을 관찰합니다.</p>
+  </header>
+
+  <div class="controls" role="toolbar" aria-label="시뮬레이션 조작">
+    <button type="button" class="primary" id="btn-int" aria-label="정수 덧셈 200회 실행">정수 덧셈 200회 (add(1, 2))</button>
+    <button type="button" class="danger" id="btn-str" aria-label="문자열 1회 주입">문자열 던지기 (add("a", "b"))</button>
+    <button type="button" id="btn-reset" aria-label="초기화">초기화</button>
+  </div>
+
+  <section class="grid" aria-label="엔진 상태">
+    <div class="card">
+      <div class="label">엔진 런타임 모드</div>
+      <div id="badge-engine" class="badge badge-interp">IGNITION (인터프리터)</div>
+      <div class="metric">
+        <span>누적 호출 횟수:</span>
+        <span id="val-calls" class="metric-val">0회</span>
+      </div>
+      <div class="metric">
+        <span>추론된 인자 타입:</span>
+        <span id="val-type" class="metric-val">None</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">메모리 오프셋 & 최적화 지표</div>
+      <div id="badge-map" class="badge badge-interp">해시 테이블 탐색</div>
+      <div class="metric">
+        <span>호출당 추정 비용:</span>
+        <span id="val-cost" class="metric-val">~45 클럭</span>
+      </div>
+      <div class="metric">
+        <span>역최적화(Deopt) 횟수:</span>
+        <span id="val-deopt" class="metric-val">0회</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="label">실행 중인 바이트코드 / 네이티브 기계어</div>
+  <div class="code-view" id="code-panel" aria-live="polite">
+<span class="cm">// Ignition 바이트코드 파이프라인 (타입 검증 루프)</span>
+<span class="kw">LdaNamedProperty</span> a, [0]
+<span class="kw">AddWithFeedback</span>  b, [1]
+<span class="kw">Return</span>
+  </div>
+
+  <div class="label">엔진 이벤트 로그</div>
+  <div class="log-container" id="log-list" role="log" aria-live="polite">
+    <div class="log-row">[Init] Ignition 인터프리터 준비 완료. 코드가 콜드 상태입니다.</div>
+  </div>
+</main>
+
+<script>
+(function() {
+  let calls = 0;
+  let deopts = 0;
+  let isCompiled = false;
+  let inferred = null;
+
+  const btnInt = document.getElementById('btn-int');
+  const btnStr = document.getElementById('btn-str');
+  const btnReset = document.getElementById('btn-reset');
+
+  const badgeEngine = document.getElementById('badge-engine');
+  const badgeMap = document.getElementById('badge-map');
+  const valCalls = document.getElementById('val-calls');
+  const valType = document.getElementById('val-type');
+  const valCost = document.getElementById('val-cost');
+  const valDeopt = document.getElementById('val-deopt');
+  const codePanel = document.getElementById('code-panel');
+  const logList = document.getElementById('log-list');
+
+  function addLog(text, cls) {
+    const row = document.createElement('div');
+    row.className = 'log-row' + (cls ? ' ' + cls : '');
+    row.textContent = `[t+${calls}] ${text}`;
+    logList.insertBefore(row, logList.firstChild);
+  }
+
+  function render() {
+    valCalls.textContent = calls + '회';
+    valDeopt.textContent = deopts + '회';
+    valType.textContent = inferred || 'None';
+
+    if (isCompiled) {
+      badgeEngine.className = 'badge badge-opt';
+      badgeEngine.textContent = 'TURBOFAN (네이티브 기계어)';
+      badgeMap.className = 'badge badge-opt';
+      badgeMap.textContent = 'C++ 구조체 오프셋 직접 참조';
+      valCost.textContent = '1 클럭 (순수 CPU ADD)';
+      codePanel.innerHTML = '<span class="cm">// TurboFan 투기적 x86 기계어 (Speculative JIT)</span>\n' +
+        '<span class="kw">CHECK_INT</span>  eax, ecx         <span class="warn">; 가드 체크 (문자열이면 Deopt 비상 탈출!)</span>\n' +
+        '<span class="hl">ADD</span>        eax, edx         <span class="cm">; 하드웨어 레지스터 직통 덧셈</span>\n' +
+        '<span class="kw">RET</span>';
+    } else {
+      badgeEngine.className = 'badge badge-interp';
+      badgeEngine.textContent = 'IGNITION (인터프리터)';
+      badgeMap.className = 'badge badge-interp';
+      badgeMap.textContent = '해시 테이블 탐색';
+      valCost.textContent = '~45 클럭 (바이트코드 파싱)';
+      codePanel.innerHTML = '<span class="cm">// Ignition 바이트코드 파이프라인 (콜드/인터프리터)</span>\n' +
+        '<span class="kw">LdaNamedProperty</span> a, [0]\n' +
+        '<span class="kw">AddWithFeedback</span>  b, [1]\n' +
+        '<span class="kw">Return</span>';
+    }
+  }
+
+  btnInt.addEventListener('click', function() {
+    calls += 200;
+    if (!inferred) inferred = 'Integer (Smi)';
+
+    if (calls >= 400 && !isCompiled) {
+      isCompiled = true;
+      addLog('핫스팟 감지: add()가 연속 정수로 호출됨. TurboFan이 순수 x86 기계어로 JIT 컴파일 완료.', 'opt');
+    } else {
+      addLog('add(1, 2) 정수 덧셈 200회 실행.');
+    }
+    render();
+  });
+
+  btnStr.addEventListener('click', function() {
+    calls += 1;
+    if (isCompiled) {
+      isCompiled = false;
+      deopts += 1;
+      inferred = 'String (Polymorphic)';
+      addLog('CHECK_INT 가드 실패! 문자열이 주입되어 기계어를 즉시 폐기하고 Ignition 인터프리터로 역최적화(Deopt) 탈출.', 'deopt');
+    } else {
+      inferred = 'String / Mixed';
+      addLog('인터프리터가 안전하게 문자열 접합(Concatenation) 처리.');
+    }
+    render();
+  });
+
+  btnReset.addEventListener('click', function() {
+    calls = 0;
+    deopts = 0;
+    isCompiled = false;
+    inferred = null;
+    logList.innerHTML = '<div class="log-row">[Reset] V8 엔진 초기화 완료.</div>';
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

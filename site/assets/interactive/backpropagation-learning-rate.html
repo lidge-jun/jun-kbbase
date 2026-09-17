@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>학습률에 따른 경사 하강 궤적</title>
+<style>
+  /* === KB 토큰 === */
+  :root {
+    --kb-surface: #faf9f5;
+    --kb-text: #252824;
+    --kb-text-2: #686c67;
+    --kb-text-3: #9a9d97;
+    --kb-accent: #405779;
+    --kb-border: #d5d5cd;
+    --kb-border-light: #e3e2dc;
+    --kb-serif: 'Noto Serif KR', Georgia, serif;
+    --kb-sans: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+    --kb-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  }
+
+  /* === reset === */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; }
+  body {
+    font-family: var(--kb-sans);
+    color: var(--kb-text);
+    line-height: 1.6;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* === layout === */
+  #app { max-width: 736px; margin: 0 auto; padding: 2px; }
+  h1 {
+    font-family: var(--kb-serif);
+    font-size: clamp(0.94rem, 0.88rem + 0.3vw, 1.06rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin-bottom: 3px;
+  }
+  .lede {
+    font-size: clamp(0.78rem, 0.75rem + 0.15vw, 0.84rem);
+    color: var(--kb-text-2);
+    text-wrap: pretty;
+    margin-bottom: 10px;
+  }
+
+  /* === chart: 높이 고정, 폭에 따라 viewBox 재계산 === */
+  .chart {
+    display: block;
+    width: 100%;
+    height: 240px;
+    background: var(--kb-surface);
+    border: 1px solid var(--kb-border-light);
+    border-radius: 2px;
+  }
+
+  /* === readout === */
+  .readout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 16px;
+    margin-top: 9px;
+    font-family: var(--kb-mono);
+    font-size: 0.76rem;
+    color: var(--kb-text-2);
+  }
+  .readout b { color: var(--kb-text); font-weight: 500; }
+
+  .verdict {
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid var(--kb-border-light);
+    font-size: clamp(0.78rem, 0.75rem + 0.15vw, 0.85rem);
+    color: var(--kb-text-2);
+    text-wrap: pretty;
+  }
+  .verdict strong { color: var(--kb-text); font-weight: 600; }
+
+  /* === controls === */
+  .controls { margin-top: 10px; display: grid; gap: 6px; }
+  .field {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    gap: 0 10px;
+  }
+  .field label { font-size: 0.8rem; color: var(--kb-text-2); }
+  .field output { font-family: var(--kb-mono); font-size: 0.8rem; color: var(--kb-text); }
+  .field input[type="range"] {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 44px;
+    accent-color: var(--kb-accent);
+    background: transparent;
+    cursor: pointer;
+  }
+  .field input[type="range"]:focus-visible {
+    outline: 2px solid var(--kb-accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+  .hint { font-family: var(--kb-mono); color: var(--kb-text-3); }
+
+  /* === chart primitives === */
+  .axis { stroke: var(--kb-border); stroke-width: 1; }
+  .grid-line { stroke: var(--kb-border-light); stroke-width: 1; }
+  .tick-text { font-family: var(--kb-mono); font-size: 11px; fill: var(--kb-text-3); }
+  .axis-text { font-family: var(--kb-sans); font-size: 11px; fill: var(--kb-text-2); }
+  .optimum { stroke: var(--kb-text-3); stroke-width: 1; stroke-dasharray: 4 3; }
+  .path-line { fill: none; stroke: var(--kb-accent); stroke-width: 1.5; }
+  .step-dot { fill: var(--kb-surface); stroke: var(--kb-accent); stroke-width: 1.5; }
+  .step-dot.current { fill: var(--kb-accent); }
+  .off-chart { fill: var(--kb-accent); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .step-dot.current { transition: cx 0.18s ease-out, cy 0.18s ease-out; }
+  }
+</style>
+</head>
+<body>
+<main id="app" aria-labelledby="widget-title">
+  <h1 id="widget-title">학습률을 바꾸면 가중치는 어디로 가는가</h1>
+  <p class="lede">본문과 같은 설정이다. 입력 2, 정답 2, 시작 가중치 0.5에서 출발하고 손실이 가장 낮은 지점은 <span class="hint">w = 1</span>이다.</p>
+
+  <svg class="chart" id="chart" viewBox="0 0 420 240" role="img" aria-labelledby="chart-title chart-desc">
+    <title id="chart-title">단계에 따른 가중치 변화 궤적</title>
+    <desc id="chart-desc">가로축은 갱신 단계, 세로축은 가중치다. 점선은 최적 가중치 1이다. 점이 점선에 가까워지면 수렴, 같은 폭으로 번갈아 벗어나면 진동, 점점 멀어지면 발산이다. 현재 값과 판정은 그래프 아래 텍스트로도 제공된다.</desc>
+    <g id="chart-static"></g>
+    <g id="chart-path"></g>
+  </svg>
+
+  <p class="readout">
+    <span>단계 <b id="out-step">5</b></span>
+    <span>가중치 w = <b id="out-w">1.0000</b></span>
+    <span>손실 L = <b id="out-loss">0.0000</b></span>
+  </p>
+
+  <p class="verdict" id="verdict" aria-live="polite"></p>
+
+  <div class="controls">
+    <div class="field">
+      <label for="eta">학습률 η</label>
+      <output for="eta" id="eta-out">0.10</output>
+      <input type="range" id="eta" min="0.01" max="0.35" step="0.01" value="0.10">
+    </div>
+    <div class="field">
+      <label for="step">보여줄 단계 수</label>
+      <output for="step" id="step-out">5</output>
+      <input type="range" id="step" min="0" max="12" step="1" value="5">
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.getElementById('app');
+  var svg = document.getElementById('chart');
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  /* === 모델: 본문과 동일한 설정 === */
+  var X = 2, Y = 2, W0 = 0.5, W_OPT = 1;
+  function loss(w) { var e = w * X - Y; return e * e; }
+  function grad(w) { return 2 * (w * X - Y) * X; }
+
+  /* === 좌표계: 가로 단계, 세로 가중치. 높이는 고정, 폭만 반응형 === */
+  var STEP_MAX = 12;
+  var W_LO = -2, W_HI = 4;
+  var PAD_L = 34, PAD_R = 56, PAD_T = 24, PAD_B = 32;
+  var VH = 240;
+  var VW = 420, PLOT_W = 330, PLOT_H = 184;
+
+  function layout() {
+    var rect = svg.getBoundingClientRect();
+    VW = Math.max(260, Math.round(rect.width));
+    svg.setAttribute('viewBox', '0 0 ' + VW + ' ' + VH);
+    PLOT_W = VW - PAD_L - PAD_R;
+    PLOT_H = VH - PAD_T - PAD_B;
+  }
+
+  function px(n) { return PAD_L + n / STEP_MAX * PLOT_W; }
+  function py(w) { return PAD_T + (W_HI - w) / (W_HI - W_LO) * PLOT_H; }
+
+  function el(name, attrs, text) {
+    var node = document.createElementNS(SVG_NS, name);
+    for (var key in attrs) node.setAttribute(key, attrs[key]);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function clear(g) { while (g.firstChild) g.removeChild(g.firstChild); }
+
+  /* === 정적 레이어 === */
+  function drawStatic() {
+    var g = document.getElementById('chart-static');
+    clear(g);
+    var i;
+
+    var wTicks = [4, 2, 0, -2];
+    for (i = 0; i < wTicks.length; i++) {
+      var wy = py(wTicks[i]);
+      g.appendChild(el('line', { x1: PAD_L, y1: wy, x2: VW - PAD_R, y2: wy, 'class': 'grid-line' }));
+      g.appendChild(el('text', { x: PAD_L - 7, y: wy + 4, 'text-anchor': 'end', 'class': 'tick-text' }, String(wTicks[i])));
+    }
+
+    g.appendChild(el('line', { x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: PAD_T + PLOT_H, 'class': 'axis' }));
+    g.appendChild(el('line', { x1: PAD_L, y1: PAD_T + PLOT_H, x2: VW - PAD_R, y2: PAD_T + PLOT_H, 'class': 'axis' }));
+
+    var tickEvery = PLOT_W < 240 ? 3 : 2;
+    for (i = 0; i <= STEP_MAX; i += tickEvery) {
+      var sx = px(i);
+      g.appendChild(el('line', { x1: sx, y1: PAD_T + PLOT_H, x2: sx, y2: PAD_T + PLOT_H + 4, 'class': 'axis' }));
+      g.appendChild(el('text', { x: sx, y: PAD_T + PLOT_H + 16, 'text-anchor': 'middle', 'class': 'tick-text' }, String(i)));
+    }
+
+    g.appendChild(el('text', { x: VW - PAD_R, y: VH - 3, 'text-anchor': 'end', 'class': 'axis-text' }, '갱신 단계'));
+    g.appendChild(el('text', { x: 2, y: 12, 'text-anchor': 'start', 'class': 'axis-text' }, '가중치 w'));
+
+    var oy = py(W_OPT);
+    g.appendChild(el('line', { x1: PAD_L, y1: oy, x2: VW - PAD_R, y2: oy, 'class': 'optimum' }));
+    g.appendChild(el('text', { x: VW - PAD_R + 5, y: oy + 4, 'text-anchor': 'start', 'class': 'axis-text' }, '최적 w=1'));
+  }
+
+  /* === 궤적 === */
+  function trajectory(eta, steps) {
+    var pts = [W0];
+    var w = W0;
+    for (var i = 0; i < steps; i++) {
+      w = w - eta * grad(w);
+      pts.push(w);
+      if (!isFinite(w) || Math.abs(w) > 1e6) break;
+    }
+    return pts;
+  }
+
+  function classify(eta) {
+    var r = Math.abs(1 - 2 * X * X * eta);
+    if (r < 0.02) return 'exact';
+    if (r < 0.98) return 'converge';
+    if (r <= 1.02) return 'oscillate';
+    return 'diverge';
+  }
+
+  var VERDICT = {
+    exact: '한 걸음에 점선 위로 정확히 내려앉는다. 이 설정에서 그 값은 <strong>η = 0.125</strong> 하나뿐이다.',
+    converge: '점이 점선에 <strong>수렴한다</strong>. 학습률이 작을수록 안전하지만 같은 거리를 좁히는 데 더 많은 단계가 필요하다.',
+    oscillate: '점선을 사이에 두고 <strong>같은 폭으로 진동한다</strong>. 가까워지지도 멀어지지도 않아 학습이 제자리에 머문다.',
+    diverge: '한 걸음이 점선을 지나쳐 반대편 더 먼 곳에 떨어진다. 단계마다 폭이 커지며 <strong>발산한다</strong>.'
+  };
+
+  /* === 궤적 레이어 === */
+  var lastEta = 0.1, lastSteps = 5;
+
+  function draw(eta, steps) {
+    lastEta = eta;
+    lastSteps = steps;
+    var pts = trajectory(eta, steps);
+    var g = document.getElementById('chart-path');
+    clear(g);
+
+    var coords = [];
+    var offChart = false;
+    var i;
+    for (i = 0; i < pts.length; i++) {
+      var w = pts[i];
+      var safe = isFinite(w) ? w : (w > 0 ? W_HI : W_LO);
+      var clamped = Math.max(W_LO + 0.12, Math.min(W_HI - 0.12, safe));
+      var out = clamped !== w;
+      if (out) offChart = true;
+      coords.push({ x: px(i), y: py(clamped), out: out, up: safe > W_OPT });
+    }
+
+    if (coords.length > 1) {
+      var d = '';
+      for (i = 0; i < coords.length; i++) {
+        d += (i === 0 ? 'M' : 'L') + coords[i].x.toFixed(2) + ' ' + coords[i].y.toFixed(2);
+      }
+      g.appendChild(el('path', { d: d, 'class': 'path-line' }));
+    }
+
+    for (i = 0; i < coords.length; i++) {
+      var c = coords[i];
+      var isLast = i === coords.length - 1;
+      if (c.out) {
+        var s = 5;
+        var tip = c.up ? c.y - s : c.y + s;
+        var base = c.up ? c.y + s : c.y - s;
+        g.appendChild(el('polygon', {
+          points: [c.x.toFixed(2) + ',' + tip.toFixed(2),
+                   (c.x + s).toFixed(2) + ',' + base.toFixed(2),
+                   (c.x - s).toFixed(2) + ',' + base.toFixed(2)].join(' '),
+          'class': 'off-chart'
+        }));
+      } else {
+        g.appendChild(el('circle', {
+          cx: c.x.toFixed(2), cy: c.y.toFixed(2), r: isLast ? 5 : 3,
+          'class': 'step-dot' + (isLast ? ' current' : '')
+        }));
+      }
+    }
+
+    var wNow = pts[pts.length - 1];
+    var finite = isFinite(wNow);
+    document.getElementById('out-step').textContent = String(pts.length - 1);
+    document.getElementById('out-w').textContent = finite ? wNow.toFixed(4) : '범위 밖';
+    document.getElementById('out-loss').textContent = finite ? loss(wNow).toFixed(4) : '범위 밖';
+    document.getElementById('verdict').innerHTML =
+      VERDICT[classify(eta)] + (offChart ? ' 삼각형은 그래프 범위를 벗어난 단계이고, 방향은 벗어난 쪽을 가리킨다.' : '');
+  }
+
+  /* === 연결 === */
+  var etaInput = root.querySelector('#eta');
+  var stepInput = root.querySelector('#step');
+  var etaOut = root.querySelector('#eta-out');
+  var stepOut = root.querySelector('#step-out');
+
+  function update() {
+    var eta = parseFloat(etaInput.value);
+    var steps = parseInt(stepInput.value, 10);
+    etaOut.textContent = eta.toFixed(2);
+    stepOut.textContent = String(steps);
+    draw(eta, steps);
+  }
+
+  function relayout() {
+    layout();
+    drawStatic();
+    draw(lastEta, lastSteps);
+  }
+
+  etaInput.addEventListener('input', update);
+  stepInput.addEventListener('input', update);
+
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(relayout).observe(svg);
+  } else {
+    window.addEventListener('resize', relayout);
+  }
+
+  layout();
+  drawStatic();
+  update();
+})();
+</script>
+</body>
+</html>

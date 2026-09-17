@@ -1,0 +1,17 @@
+{
+  "name": "jun-knowledge-base",
+  "version": "1.0.0",
+  "description": "Personal knowledge base + dev blog with ontology graph",
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "dev": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "keywords": ["knowledge-base", "ontology", "blog"],
+  "author": "Jun",
+  "license": "MIT",
+  "private": true
+}

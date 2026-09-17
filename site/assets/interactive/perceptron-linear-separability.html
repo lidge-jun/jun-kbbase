@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>직선 하나로 가를 수 있는가</title>
+<style>
+  /* === KB 토큰 === */
+  :root {
+    --kb-surface: #faf9f5;
+    --kb-inset: #eae9e3;
+    --kb-text: #252824;
+    --kb-text-2: #686c67;
+    --kb-text-3: #9a9d97;
+    --kb-accent: #405779;
+    --kb-accent-light: #e6ecf3;
+    --kb-border: #d5d5cd;
+    --kb-border-light: #e3e2dc;
+    --kb-serif: 'Noto Serif KR', Georgia, serif;
+    --kb-sans: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+    --kb-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  }
+
+  /* === reset === */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; }
+  body {
+    font-family: var(--kb-sans);
+    color: var(--kb-text);
+    line-height: 1.6;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* === layout === */
+  #app { max-width: 736px; margin: 0 auto; padding: 2px; }
+  h1 {
+    font-family: var(--kb-serif);
+    font-size: clamp(0.94rem, 0.88rem + 0.3vw, 1.06rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin-bottom: 3px;
+  }
+  .lede {
+    font-size: clamp(0.78rem, 0.75rem + 0.15vw, 0.84rem);
+    color: var(--kb-text-2);
+    text-wrap: pretty;
+    margin-bottom: 10px;
+  }
+
+  /* === plane: 정사각형 고정 비율, 최대 폭 제한으로 높이 안정 === */
+  .plane {
+    display: block;
+    width: 100%;
+    max-width: 300px;
+    height: auto;
+    background: var(--kb-surface);
+    border: 1px solid var(--kb-border-light);
+    border-radius: 2px;
+  }
+
+  /* === readout === */
+  .readout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 16px;
+    margin-top: 9px;
+    font-family: var(--kb-mono);
+    font-size: 0.76rem;
+    color: var(--kb-text-2);
+  }
+  .readout b { color: var(--kb-text); font-weight: 500; }
+
+  .verdict {
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid var(--kb-border-light);
+    font-size: clamp(0.78rem, 0.75rem + 0.15vw, 0.85rem);
+    color: var(--kb-text-2);
+    text-wrap: pretty;
+  }
+  .verdict strong { color: var(--kb-text); font-weight: 600; }
+
+  /* === controls === */
+  .controls { margin-top: 10px; display: grid; gap: 6px; }
+  fieldset { border: 0; }
+  legend { font-size: 0.8rem; color: var(--kb-text-2); padding: 0; }
+  .choices { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: 2px; }
+  .choices label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    font-family: var(--kb-mono);
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .choices input[type="radio"] { accent-color: var(--kb-accent); width: 16px; height: 16px; }
+  .choices input[type="radio"]:focus-visible {
+    outline: 2px solid var(--kb-accent);
+    outline-offset: 3px;
+  }
+  .field {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    gap: 0 10px;
+  }
+  .field label { font-size: 0.8rem; color: var(--kb-text-2); }
+  .field output { font-family: var(--kb-mono); font-size: 0.8rem; color: var(--kb-text); }
+  .field input[type="range"] {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 44px;
+    accent-color: var(--kb-accent);
+    background: transparent;
+    cursor: pointer;
+  }
+  .field input[type="range"]:focus-visible {
+    outline: 2px solid var(--kb-accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* === plane primitives === */
+  .axis { stroke: var(--kb-border); stroke-width: 1; }
+  .guide { stroke: var(--kb-border-light); stroke-width: 1; }
+  .tick-text { font-family: var(--kb-mono); font-size: 11px; fill: var(--kb-text-3); }
+  .axis-text { font-family: var(--kb-sans); font-size: 11px; fill: var(--kb-text-2); }
+  .region { fill: var(--kb-accent-light); }
+  .boundary { stroke: var(--kb-accent); stroke-width: 1.5; }
+  .pt { stroke: var(--kb-text); stroke-width: 1.5; }
+  .pt.on { fill: var(--kb-text); }
+  .pt.off { fill: var(--kb-surface); }
+  .pt-miss { fill: none; stroke: var(--kb-text); stroke-width: 1.2; stroke-dasharray: 3 2.5; }
+  .pt-text { font-family: var(--kb-mono); font-size: 11px; fill: var(--kb-text-2); }
+</style>
+</head>
+<body>
+<main id="app" aria-labelledby="widget-title">
+  <h1 id="widget-title">직선 하나로 네 점을 가를 수 있는가</h1>
+  <p class="lede">퍼셉트론은 평면에 직선을 하나 긋고 한쪽은 1, 다른 쪽은 0이라고 답한다. 색칠된 쪽이 1이다. 방향과 위치를 움직여 네 점을 모두 맞혀 보라.</p>
+
+  <svg class="plane" viewBox="0 0 300 300" role="img" aria-labelledby="plane-title plane-desc">
+    <title id="plane-title">두 입력이 만드는 평면과 퍼셉트론의 결정 경계</title>
+    <desc id="plane-desc">가로축은 첫 번째 입력, 세로축은 두 번째 입력이다. 네 점은 입력 조합이고 점 옆 숫자가 정답이다. 속이 찬 점은 정답 1, 빈 점은 정답 0이다. 점선 테두리가 둘린 점은 현재 직선이 틀리게 답한 점이다. 맞힌 개수와 판정은 그래프 아래 텍스트로도 제공된다.</desc>
+    <defs>
+      <clipPath id="plot-clip"><rect x="34" y="12" width="254" height="254"></rect></clipPath>
+    </defs>
+    <g id="plane-region" clip-path="url(#plot-clip)"></g>
+    <g id="plane-static"></g>
+    <g id="plane-points"></g>
+  </svg>
+
+  <p class="readout">
+    <span>맞힌 점 <b id="out-score">2</b>/4</span>
+    <span>틀린 점 <b id="out-miss">(0,1) (1,0)</b></span>
+    <span>이 문제 최고 <b id="out-best">2</b>/4</span>
+  </p>
+
+  <p class="verdict" id="verdict" aria-live="polite"></p>
+
+  <div class="controls">
+    <fieldset>
+      <legend>문제</legend>
+      <div class="choices">
+        <label><input type="radio" name="problem" value="AND" checked> AND</label>
+        <label><input type="radio" name="problem" value="OR"> OR</label>
+        <label><input type="radio" name="problem" value="XOR"> XOR</label>
+      </div>
+    </fieldset>
+    <div class="field">
+      <label for="angle">경계선 방향</label>
+      <output for="angle" id="angle-out">45°</output>
+      <input type="range" id="angle" min="0" max="355" step="5" value="45">
+    </div>
+    <div class="field">
+      <label for="offset">경계선 위치</label>
+      <output for="offset" id="offset-out">-0.50</output>
+      <input type="range" id="offset" min="-1.6" max="1.6" step="0.05" value="-0.5">
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.getElementById('app');
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  /* === 문제 정의: 입력 네 조합과 정답 === */
+  var POINTS = [[0, 0], [0, 1], [1, 0], [1, 1]];
+  var PROBLEMS = {
+    AND: [0, 0, 0, 1],
+    OR:  [0, 1, 1, 1],
+    XOR: [0, 1, 1, 0]
+  };
+
+  /* === 좌표계: 정사각 평면 === */
+  var LO = -0.45, HI = 1.45;
+  var PAD_L = 34, PAD_T = 12, PLOT = 254;
+
+  function px(x1) { return PAD_L + (x1 - LO) / (HI - LO) * PLOT; }
+  function py(x2) { return PAD_T + (HI - x2) / (HI - LO) * PLOT; }
+
+  function el(name, attrs, text) {
+    var node = document.createElementNS(SVG_NS, name);
+    for (var key in attrs) node.setAttribute(key, attrs[key]);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function clear(g) { while (g.firstChild) g.removeChild(g.firstChild); }
+
+  /* === 축과 눈금 (한 번만 그린다) === */
+  function drawStatic() {
+    var g = document.getElementById('plane-static');
+    var i;
+
+    for (i = 0; i <= 1; i++) {
+      g.appendChild(el('line', { x1: px(i), y1: py(LO), x2: px(i), y2: py(HI), 'class': 'guide' }));
+      g.appendChild(el('line', { x1: px(LO), y1: py(i), x2: px(HI), y2: py(i), 'class': 'guide' }));
+    }
+
+    g.appendChild(el('line', { x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: PAD_T + PLOT, 'class': 'axis' }));
+    g.appendChild(el('line', { x1: PAD_L, y1: PAD_T + PLOT, x2: PAD_L + PLOT, y2: PAD_T + PLOT, 'class': 'axis' }));
+
+    for (i = 0; i <= 1; i++) {
+      g.appendChild(el('text', { x: px(i), y: PAD_T + PLOT + 15, 'text-anchor': 'middle', 'class': 'tick-text' }, String(i)));
+      g.appendChild(el('text', { x: PAD_L - 7, y: py(i) + 4, 'text-anchor': 'end', 'class': 'tick-text' }, String(i)));
+    }
+
+    g.appendChild(el('text', { x: PAD_L + PLOT, y: 296, 'text-anchor': 'end', 'class': 'axis-text' }, '입력 x\u2081'));
+    g.appendChild(el('text', { x: 2, y: 10, 'text-anchor': 'start', 'class': 'axis-text' }, '입력 x\u2082'));
+  }
+
+  /* === 퍼셉트론 === */
+  function weights(angleDeg) {
+    var r = angleDeg * Math.PI / 180;
+    return { w1: Math.cos(r), w2: Math.sin(r) };
+  }
+
+  function predict(p, w, b) {
+    return (w.w1 * p[0] + w.w2 * p[1] + b) > 0 ? 1 : 0;
+  }
+
+  /* === 상태 === */
+  var best = {};
+  var current = { problem: 'AND', angle: 45, offset: -0.5 };
+
+  var VERDICT = {
+    solvableTry: '이 문제는 직선 하나로 가를 수 있다. 방향과 위치를 움직여 <strong>4/4</strong>를 만들어 보라.',
+    solvableDone: '<strong>4/4</strong>. 직선 하나로 완전히 갈렸다. 이렇게 갈라지는 문제를 <strong>선형 분리 가능(linearly separable)</strong>하다고 한다.',
+    xor: 'XOR은 정답 1인 두 점이 <strong>대각선으로 엇갈려</strong> 있다. 어떤 방향과 위치를 넣어도 4/4는 나오지 않고 <strong>최대 3/4</strong>에서 막힌다. 퍼셉트론 한 개의 한계가 이것이다.'
+  };
+
+  function draw() {
+    var problem = current.problem;
+    var targets = PROBLEMS[problem];
+    var w = weights(current.angle);
+    var b = current.offset;
+
+    /* 1이라고 답하는 반평면을 칠한다 */
+    var regionG = document.getElementById('plane-region');
+    clear(regionG);
+    var t = 4;
+    var p0 = { x: -b * w.w1, y: -b * w.w2 };
+    var d = { x: -w.w2, y: w.w1 };
+    var a = { x: p0.x - t * d.x, y: p0.y - t * d.y };
+    var c = { x: p0.x + t * d.x, y: p0.y + t * d.y };
+    var poly = [
+      px(a.x) + ',' + py(a.y),
+      px(c.x) + ',' + py(c.y),
+      px(c.x + t * w.w1) + ',' + py(c.y + t * w.w2),
+      px(a.x + t * w.w1) + ',' + py(a.y + t * w.w2)
+    ].join(' ');
+    regionG.appendChild(el('polygon', { points: poly, 'class': 'region' }));
+    regionG.appendChild(el('line', {
+      x1: px(a.x), y1: py(a.y), x2: px(c.x), y2: py(c.y), 'class': 'boundary'
+    }));
+
+    /* 네 점과 정답, 오답 표시 */
+    var pointsG = document.getElementById('plane-points');
+    clear(pointsG);
+    var score = 0;
+    var missed = [];
+    for (var i = 0; i < POINTS.length; i++) {
+      var p = POINTS[i];
+      var target = targets[i];
+      var y = predict(p, w, b);
+      var ok = y === target;
+      if (ok) score++;
+      else missed.push('(' + p[0] + ',' + p[1] + ')');
+
+      var cx = px(p[0]);
+      var cy = py(p[1]);
+      if (!ok) {
+        pointsG.appendChild(el('circle', { cx: cx, cy: cy, r: 11, 'class': 'pt-miss' }));
+      }
+      pointsG.appendChild(el('circle', {
+        cx: cx, cy: cy, r: 5.5, 'class': 'pt ' + (target === 1 ? 'on' : 'off')
+      }));
+      pointsG.appendChild(el('text', {
+        x: cx + 15, y: cy + 4, 'text-anchor': 'start', 'class': 'pt-text'
+      }, '정답 ' + target));
+    }
+
+    if (best[problem] === undefined || score > best[problem]) best[problem] = score;
+
+    document.getElementById('out-score').textContent = String(score);
+    document.getElementById('out-miss').textContent = missed.length ? missed.join(' ') : '없음';
+    document.getElementById('out-best').textContent = String(best[problem]);
+
+    var verdict;
+    if (problem === 'XOR') verdict = VERDICT.xor;
+    else verdict = score === 4 ? VERDICT.solvableDone : VERDICT.solvableTry;
+    document.getElementById('verdict').innerHTML = verdict;
+  }
+
+  /* === 연결 === */
+  var angleInput = root.querySelector('#angle');
+  var offsetInput = root.querySelector('#offset');
+  var angleOut = root.querySelector('#angle-out');
+  var offsetOut = root.querySelector('#offset-out');
+  var radios = root.querySelectorAll('input[name="problem"]');
+
+  function update() {
+    current.angle = parseInt(angleInput.value, 10);
+    current.offset = parseFloat(offsetInput.value);
+    angleOut.textContent = current.angle + '\u00b0';
+    offsetOut.textContent = current.offset.toFixed(2);
+    draw();
+  }
+
+  angleInput.addEventListener('input', update);
+  offsetInput.addEventListener('input', update);
+  for (var i = 0; i < radios.length; i++) {
+    radios[i].addEventListener('change', function (e) {
+      current.problem = e.target.value;
+      draw();
+    });
+  }
+
+  drawStatic();
+  update();
+})();
+</script>
+</body>
+</html>
